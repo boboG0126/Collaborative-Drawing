@@ -1,0 +1,2097 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Collaborative Drawing App</title>
+    <!-- Socket.io client - Load from CDN -->
+    <script src="https://cdn.socket.io/4.6.1/socket.io.min.js" integrity="sha384-xNG8g9+0f03eFJVAfC0QKnFgHBl5JJEoHqFMRlhK0PnLVMvFCNN3GvZEJjDr4W8W" crossorigin="anonymous"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="%238B5CF6" stroke="white" stroke-width="2"/></svg>') 12 12, auto;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        /* Rainbow Spiral Background Animation */
+        @keyframes rainbow-spiral {
+            0% { transform: rotate(0deg) scale(1); }
+            50% { transform: rotate(180deg) scale(1.1); }
+            100% { transform: rotate(360deg) scale(1); }
+        }
+
+        @keyframes gradient-shift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        .start-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(-45deg, #ee7752, #e73c7e, #23a6d5, #23d5ab, #f093fb, #f5576c, #4facfe);
+            background-size: 400% 400%;
+            animation: gradient-shift 15s ease infinite;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .start-screen.hidden {
+            display: none;
+        }
+
+        .spiral-container {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .spiral {
+            position: absolute;
+            width: 600px;
+            height: 600px;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            animation: rainbow-spiral 20s linear infinite;
+            opacity: 0.3;
+        }
+
+        .spiral::before {
+            content: '';
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: conic-gradient(
+                from 0deg,
+                transparent 0deg,
+                rgba(255, 255, 255, 0.8) 90deg,
+                transparent 180deg,
+                rgba(255, 255, 255, 0.6) 270deg,
+                transparent 360deg
+            );
+        }
+
+        .start-content {
+            position: relative;
+            z-index: 10;
+            text-align: center;
+        }
+
+        .app-title {
+            font-size: 72px;
+            font-weight: 800;
+            color: white;
+            text-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            margin-bottom: 20px;
+            animation: float 3s ease-in-out infinite;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-20px); }
+        }
+
+        .app-subtitle {
+            font-size: 24px;
+            color: rgba(255, 255, 255, 0.9);
+            margin-bottom: 60px;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+        }
+
+        .start-buttons {
+            display: flex;
+            gap: 30px;
+        }
+
+        .start-btn {
+            padding: 20px 50px;
+            font-size: 24px;
+            font-weight: 600;
+            border: none;
+            border-radius: 50px;
+            background: white;
+            color: #8B5CF6;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .start-btn::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            border-radius: 50%;
+            background: rgba(139, 92, 246, 0.3);
+            transform: translate(-50%, -50%);
+            transition: width 0.6s, height 0.6s;
+        }
+
+        .start-btn:hover {
+            transform: translateY(-5px) scale(1.05);
+            box-shadow: 0 15px 40px rgba(0, 0, 0, 0.4);
+        }
+
+        .start-btn:hover::before {
+            width: 300px;
+            height: 300px;
+        }
+
+        .start-btn:active {
+            transform: translateY(-2px) scale(1.02);
+        }
+
+        .start-btn span {
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 24px;
+            padding: 40px;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            animation: modal-appear 0.3s ease;
+        }
+
+        @keyframes modal-appear {
+            from {
+                opacity: 0;
+                transform: scale(0.8) translateY(-50px);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1) translateY(0);
+            }
+        }
+
+        .modal-header {
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 30px;
+            color: #333;
+            text-align: center;
+        }
+
+        .canvas-size-selector {
+            margin-bottom: 30px;
+        }
+
+        .size-label {
+            font-size: 16px;
+            color: #666;
+            margin-bottom: 15px;
+            display: block;
+        }
+
+        .size-inputs {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            gap: 15px;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .size-input {
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            font-size: 24px;
+            text-align: center;
+            font-weight: 600;
+            transition: border-color 0.3s;
+        }
+
+        .size-input:focus {
+            outline: none;
+            border-color: #8B5CF6;
+        }
+
+        .size-x {
+            font-size: 24px;
+            color: #999;
+            font-weight: 600;
+        }
+
+        .preset-sizes {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .preset-btn {
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            background: white;
+            font-size: 14px;
+            font-weight: 600;
+            color: #666;
+            transition: all 0.3s;
+        }
+
+        .preset-btn:hover {
+            border-color: #8B5CF6;
+            color: #8B5CF6;
+            transform: scale(1.05);
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 15px;
+        }
+
+        .modal-btn {
+            flex: 1;
+            padding: 15px;
+            border: none;
+            border-radius: 12px;
+            font-size: 18px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .modal-btn.primary {
+            background: #8B5CF6;
+            color: white;
+        }
+
+        .modal-btn.primary:hover {
+            background: #7C3AED;
+            transform: scale(1.05);
+        }
+
+        .modal-btn.secondary {
+            background: #e0e0e0;
+            color: #666;
+        }
+
+        .modal-btn.secondary:hover {
+            background: #d0d0d0;
+        }
+
+        /* Join Room Modal */
+        .room-code-input {
+            width: 100%;
+            padding: 20px;
+            border: 3px solid #e0e0e0;
+            border-radius: 12px;
+            font-size: 36px;
+            text-align: center;
+            font-weight: 700;
+            letter-spacing: 8px;
+            text-transform: uppercase;
+            margin-bottom: 30px;
+            transition: border-color 0.3s;
+        }
+
+        .room-code-input:focus {
+            outline: none;
+            border-color: #8B5CF6;
+        }
+
+        /* Loading Screen */
+        .loading-screen {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(-45deg, #ee7752, #e73c7e, #23a6d5, #23d5ab);
+            background-size: 400% 400%;
+            animation: gradient-shift 3s ease infinite;
+            z-index: 3000;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+
+        .loading-screen.active {
+            display: flex;
+        }
+
+        .loading-spinner {
+            width: 80px;
+            height: 80px;
+            border: 8px solid rgba(255, 255, 255, 0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            margin-top: 30px;
+            font-size: 24px;
+            color: white;
+            font-weight: 600;
+        }
+
+        /* Drawing App Interface */
+        .app-container {
+            display: none;
+            width: 100vw;
+            height: 100vh;
+            background: #f0f0f0;
+        }
+
+        .app-container.active {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .app-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .room-code-display {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-size: 24px;
+            font-weight: 700;
+            letter-spacing: 3px;
+        }
+
+        .user-count {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 16px;
+        }
+
+        .app-body {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .toolbar {
+            width: 300px;
+            background: white;
+            padding: 20px;
+            overflow-y: auto;
+            box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .tool-section {
+            margin-bottom: 25px;
+        }
+
+        .tool-section h3 {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .tools-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+        }
+
+        .tool-btn {
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            padding: 15px;
+            transition: all 0.3s;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+            font-size: 12px;
+            color: #666;
+        }
+
+        .tool-btn:hover {
+            border-color: #8B5CF6;
+            background: #f5f3ff;
+            transform: scale(1.05);
+        }
+
+        .tool-btn.active {
+            border-color: #8B5CF6;
+            background: #8B5CF6;
+            color: white;
+        }
+
+        .tool-icon {
+            font-size: 24px;
+        }
+
+        .color-palette {
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 8px;
+            margin-bottom: 15px;
+        }
+
+        .color-swatch {
+            width: 100%;
+            aspect-ratio: 1;
+            border-radius: 8px;
+            transition: all 0.3s;
+            border: 2px solid transparent;
+        }
+
+        .color-swatch:hover {
+            transform: scale(1.15);
+        }
+
+        .color-swatch.active {
+            border-color: #333;
+            box-shadow: 0 0 0 3px white, 0 0 0 5px #333;
+        }
+
+        .color-wheel-container {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            align-items: center;
+        }
+
+        #colorWheel {
+            border-radius: 50%;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        #brightnessSlider {
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .color-info {
+            width: 100%;
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 15px;
+        }
+
+        .color-info-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .color-info-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .color-label {
+            font-family: monospace;
+            font-size: 14px;
+            color: #666;
+            min-width: 40px;
+            font-weight: 600;
+        }
+
+        .hex-input-field {
+            flex: 1;
+            padding: 8px 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: monospace;
+            background: white;
+        }
+
+        .hex-input-field:focus {
+            outline: none;
+            border-color: #8B5CF6;
+        }
+
+        .color-value {
+            font-family: monospace;
+            font-size: 14px;
+            color: #333;
+            flex: 1;
+        }
+
+        .slider-control {
+            margin-bottom: 15px;
+        }
+
+        .slider-control label {
+            display: block;
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+
+        .slider-control input[type="range"] {
+            width: 100%;
+            height: 8px;
+            border-radius: 4px;
+            background: #e0e0e0;
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        .slider-control input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #8B5CF6;
+        }
+
+        .slider-control input[type="range"]::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #8B5CF6;
+            border: none;
+        }
+
+        .slider-value {
+            font-size: 16px;
+            color: #8B5CF6;
+            font-weight: 700;
+        }
+
+        .action-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .action-btn {
+            padding: 12px;
+            border: none;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .action-btn.primary {
+            background: #8B5CF6;
+            color: white;
+        }
+
+        .action-btn.primary:hover {
+            background: #7C3AED;
+            transform: scale(1.02);
+        }
+
+        .action-btn.secondary {
+            background: white;
+            color: #666;
+            border: 2px solid #e0e0e0;
+        }
+
+        .action-btn.secondary:hover {
+            border-color: #8B5CF6;
+            color: #8B5CF6;
+        }
+
+        .canvas-area {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            position: relative;
+            overflow: auto;
+        }
+
+        #canvas {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="%238B5CF6" stroke="white" stroke-width="2"/></svg>') 12 12, auto;
+        }
+
+        .cursors-overlay {
+            position: absolute;
+            pointer-events: none;
+            z-index: 10;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+        }
+
+        .remote-cursor {
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            border: 3px solid white;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            transition: all 0.05s linear;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        .cursor-label {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            white-space: nowrap;
+            font-weight: 600;
+        }
+
+        .undo-redo-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .undo-redo-btn {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            background: white;
+            font-size: 20px;
+            transition: all 0.3s;
+        }
+
+        .undo-redo-btn:hover:not(:disabled) {
+            border-color: #8B5CF6;
+            background: #f5f3ff;
+            transform: scale(1.05);
+        }
+
+        .undo-redo-btn:disabled {
+            opacity: 0.3;
+        }
+
+        .zoom-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .zoom-btn {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            background: white;
+            font-size: 20px;
+            font-weight: bold;
+            transition: all 0.3s;
+        }
+
+        .zoom-btn:hover:not(:disabled) {
+            border-color: #8B5CF6;
+            background: #f5f3ff;
+            transform: scale(1.05);
+        }
+
+        .zoom-btn:disabled {
+            opacity: 0.3;
+        }
+
+        .zoom-level {
+            font-size: 16px;
+            font-weight: 600;
+            color: #8B5CF6;
+            min-width: 60px;
+            text-align: center;
+        }
+
+        .zoom-reset-btn {
+            padding: 8px 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            background: white;
+            font-size: 12px;
+            font-weight: 600;
+            color: #666;
+            transition: all 0.3s;
+        }
+
+        .zoom-reset-btn:hover {
+            border-color: #8B5CF6;
+            color: #8B5CF6;
+        }
+
+        .canvas-wrapper {
+            position: relative;
+            overflow: hidden;
+            width: 100%;
+            height: 100%;
+        }
+
+        .canvas-container {
+            transform-origin: 0 0;
+            transition: transform 0.2s ease;
+        }
+
+        .error-message {
+            background: #ff4444;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-top: 15px;
+            text-align: center;
+        }
+
+        .zoom-controls {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 100;
+        }
+
+        .zoom-btn {
+            width: 50px;
+            height: 50px;
+            border: 2px solid #8B5CF6;
+            border-radius: 50%;
+            background: white;
+            color: #8B5CF6;
+            font-size: 24px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .zoom-btn:hover:not(:disabled) {
+            background: #8B5CF6;
+            color: white;
+            transform: scale(1.1);
+            box-shadow: 0 6px 20px rgba(139, 92, 246, 0.4);
+        }
+
+        .zoom-btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        .zoom-level {
+            background: white;
+            border: 2px solid #8B5CF6;
+            border-radius: 20px;
+            padding: 8px 16px;
+            font-size: 14px;
+            font-weight: 600;
+            color: #8B5CF6;
+            text-align: center;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .canvas-wrapper {
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .canvas-container {
+            transition: transform 0.2s ease;
+            transform-origin: center center;
+        }
+    </style>
+</head>
+<body>
+    <!-- Start Screen -->
+    <div class="start-screen" id="startScreen">
+        <div class="spiral-container">
+            <div class="spiral"></div>
+        </div>
+        <div class="start-content">
+            <h1 class="app-title">🎨 Collaborative Drawing</h1>
+            <p class="app-subtitle">Draw together in real-time with friends</p>
+            <div class="start-buttons">
+                <button class="start-btn" id="createRoomBtn">
+                    <span>Create Room</span>
+                </button>
+                <button class="start-btn" id="joinRoomBtn">
+                    <span>Join Room</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Canvas Size Modal -->
+    <div class="modal" id="canvasSizeModal">
+        <div class="modal-content">
+            <div class="modal-header">Choose Canvas Size</div>
+            <div class="canvas-size-selector">
+                <label class="size-label">Custom Size (200-5000 pixels)</label>
+                <div class="size-inputs">
+                    <input type="number" class="size-input" id="canvasWidth" value="2000" min="200" max="5000">
+                    <span class="size-x">×</span>
+                    <input type="number" class="size-input" id="canvasHeight" value="2000" min="200" max="5000">
+                </div>
+                <div class="preset-sizes">
+                    <button class="preset-btn" data-width="1920" data-height="1080">1920×1080<br>HD</button>
+                    <button class="preset-btn" data-width="2000" data-height="2000">2000×2000<br>Square</button>
+                    <button class="preset-btn" data-width="3840" data-height="2160">3840×2160<br>4K</button>
+                    <button class="preset-btn" data-width="1080" data-height="1920">1080×1920<br>Portrait</button>
+                    <button class="preset-btn" data-width="2560" data-height="1440">2560×1440<br>2K</button>
+                    <button class="preset-btn" data-width="5000" data-height="5000">5000×5000<br>Max</button>
+                </div>
+            </div>
+            <div class="modal-buttons">
+                <button class="modal-btn secondary" id="cancelCanvasSizeBtn">Cancel</button>
+                <button class="modal-btn primary" id="confirmCanvasSizeBtn">Create Room</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Join Room Modal -->
+    <div class="modal" id="joinRoomModal">
+        <div class="modal-content">
+            <div class="modal-header">Enter Room Code</div>
+            <input type="text" class="room-code-input" id="roomCodeInput" placeholder="ABCDE" maxlength="5">
+            <div id="joinError"></div>
+            <div class="modal-buttons">
+                <button class="modal-btn secondary" id="cancelJoinBtn">Cancel</button>
+                <button class="modal-btn primary" id="confirmJoinBtn">Join Room</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Screen -->
+    <div class="loading-screen" id="loadingScreen">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Connecting to room...</div>
+    </div>
+
+    <!-- Drawing App -->
+    <div class="app-container" id="appContainer">
+        <div class="app-header">
+            <div class="room-code-display" id="roomCodeDisplay">ROOM: -----</div>
+            <div class="user-count" id="userCount">
+                <span id="connectionStatus">🟢</span> <span id="userCountNum">1</span> user<span id="userPlural"></span>
+            </div>
+        </div>
+        
+        <div class="app-body">
+            <div class="toolbar">
+                <div class="tool-section">
+                    <h3>Tools</h3>
+                    <div class="tools-grid">
+                        <button class="tool-btn active" data-tool="pen">
+                            <span class="tool-icon">✏️</span>
+                            <span>Pen</span>
+                        </button>
+                        <button class="tool-btn" data-tool="eraser">
+                            <span class="tool-icon">🧹</span>
+                            <span>Eraser</span>
+                        </button>
+                        <button class="tool-btn" data-tool="fill">
+                            <span class="tool-icon">🪣</span>
+                            <span>Fill</span>
+                        </button>
+                        <button class="tool-btn" data-tool="line">
+                            <span class="tool-icon">📏</span>
+                            <span>Line</span>
+                        </button>
+                        <button class="tool-btn" data-tool="rectangle">
+                            <span class="tool-icon">⬜</span>
+                            <span>Rectangle</span>
+                        </button>
+                        <button class="tool-btn" data-tool="circle">
+                            <span class="tool-icon">⭕</span>
+                            <span>Circle</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="tool-section">
+                    <h3>History</h3>
+                    <div class="undo-redo-buttons">
+                        <button class="undo-redo-btn" id="undoBtn" disabled>↶</button>
+                        <button class="undo-redo-btn" id="redoBtn" disabled>↷</button>
+                    </div>
+                </div>
+
+                <div class="tool-section">
+                    <h3>Zoom</h3>
+                    <div class="zoom-controls">
+                        <button class="zoom-btn" id="zoomOutBtn">-</button>
+                        <div class="zoom-level" id="zoomLevel">100%</div>
+                        <button class="zoom-btn" id="zoomInBtn">+</button>
+                    </div>
+                    <button class="zoom-reset-btn" id="zoomResetBtn" style="width: 100%; margin-top: 10px;">Reset Zoom</button>
+                </div>
+
+                <div class="tool-section">
+                    <h3>Quick Colors</h3>
+                    <div class="color-palette" id="colorPalette"></div>
+                </div>
+
+                <div class="tool-section">
+                    <h3>Custom Color Picker</h3>
+                    <div class="color-wheel-container">
+                        <canvas id="colorWheel" width="200" height="200"></canvas>
+                        <canvas id="brightnessSlider" width="200" height="20"></canvas>
+                        <div class="color-info">
+                            <div class="color-info-row">
+                                <span class="color-label">hex:</span>
+                                <input type="text" class="hex-input-field" id="hexInput" placeholder="#000000" maxlength="7">
+                            </div>
+                            <div class="color-info-row">
+                                <span class="color-label">rgb:</span>
+                                <span class="color-value" id="rgbValue">rgb(0, 0, 0)</span>
+                            </div>
+                            <div class="color-info-row">
+                                <span class="color-label">hsl:</span>
+                                <span class="color-value" id="hslValue">hsl(0, 0%, 0%)</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tool-section">
+                    <div class="slider-control">
+                        <label>
+                            Brush Size: <span class="slider-value" id="sizeValue">5</span>px
+                        </label>
+                        <input type="range" id="brushSize" min="1" max="50" value="5">
+                    </div>
+                </div>
+
+                <div class="tool-section">
+                    <div class="action-buttons">
+                        <button class="action-btn secondary" id="clearBtn">Clear Canvas</button>
+                        <button class="action-btn primary" id="saveBtn">Save Image</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="canvas-area">
+                <div class="canvas-wrapper" id="canvasWrapper">
+                    <div class="canvas-container" id="canvasContainer">
+                        <canvas id="canvas"></canvas>
+                    </div>
+                </div>
+                <div class="cursors-overlay" id="cursorsOverlay"></div>
+                <div class="zoom-controls">
+                    <button class="zoom-btn" id="zoomInBtn" title="Zoom In">+</button>
+                    <div class="zoom-level" id="zoomLevel">100%</div>
+                    <button class="zoom-btn" id="zoomOutBtn" title="Zoom Out">−</button>
+                    <button class="zoom-btn" id="zoomResetBtn" title="Reset Zoom">⟲</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Socket.io connection
+        let socket;
+        const SERVER_URL = window.location.origin; // Automatically use the server's URL
+
+        // Default colors
+        const defaultColors = [
+            '#000000', '#FFFFFF', '#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF',
+            '#800000', '#808080', '#FF8000', '#80FF00', '#0080FF', '#8000FF', '#FF0080', '#00FF80',
+            '#400000', '#C0C0C0', '#FFC000', '#C0FF00', '#00C0FF', '#C000FF', '#FF00C0', '#00FFC0',
+            '#200000', '#E0E0E0', '#FFE000', '#E0FF00', '#00E0FF', '#E000FF', '#FF00E0', '#00FFE0'
+        ];
+
+        // App state
+        const state = {
+            tool: 'pen',
+            color: '#000000',
+            brushSize: 5,
+            isDrawing: false,
+            startX: 0,
+            startY: 0,
+            userId: 'user_' + Math.random().toString(36).substr(2, 9),
+            userColor: `hsl(${Math.random() * 360}, 70%, 50%)`,
+            hue: 0,
+            saturation: 0,
+            lightness: 0,
+            brightness: 50,
+            roomCode: null,
+            isHost: false,
+            canvasWidth: 2000,
+            canvasHeight: 2000,
+            history: [],
+            historyStep: -1,
+            remoteCursors: new Map(),
+            connected: false,
+            zoom: 1,
+            minZoom: 0.1,
+            maxZoom: 5,
+            panX: 0,
+            panY: 0,
+            isPanning: false,
+            lastPanX: 0,
+            lastPanY: 0
+        };
+
+        // Canvas elements
+        let canvas, ctx;
+        const colorWheel = document.getElementById('colorWheel');
+        const colorWheelCtx = colorWheel.getContext('2d');
+        const brightnessSlider = document.getElementById('brightnessSlider');
+        const brightnessSliderCtx = brightnessSlider.getContext('2d');
+
+        // Initialize Socket.io
+        function initSocket() {
+            // Check if Socket.io is loaded
+            if (typeof io === 'undefined') {
+                console.error('Socket.io failed to load. Please check your internet connection.');
+                alert('Connection library failed to load. Please refresh the page or check your internet connection.');
+                return;
+            }
+
+            socket = io(SERVER_URL);
+
+            socket.on('connect', () => {
+                console.log('Connected to server!');
+                state.connected = true;
+                updateConnectionStatus('🟢');
+            });
+
+            socket.on('disconnect', () => {
+                console.log('Disconnected from server');
+                state.connected = false;
+                updateConnectionStatus('🔴');
+            });
+
+            socket.on('connect_error', (error) => {
+                console.error('Connection error:', error);
+                updateConnectionStatus('🔴');
+                alert('Could not connect to the server. Please make sure the server is running on ' + SERVER_URL);
+            });
+
+            socket.on('room-joined', (data) => {
+                console.log('Room joined:', data);
+                
+                if (!data.success) {
+                    hideLoadingScreen();
+                    document.getElementById('joinError').innerHTML = 
+                        '<div class="error-message">Room not found! Please check the code.</div>';
+                    return;
+                }
+
+                // Set canvas size if joining existing room
+                if (!state.isHost) {
+                    state.canvasWidth = data.canvasSize.width;
+                    state.canvasHeight = data.canvasSize.height;
+                }
+
+                hideLoadingScreen();
+                startDrawingApp();
+
+                // Load drawing history
+                if (data.drawingHistory && data.drawingHistory.length > 0) {
+                    data.drawingHistory.forEach(drawData => {
+                        applyRemoteDrawing(drawData);
+                    });
+                }
+
+                updateUserCount(data.userCount);
+            });
+
+            socket.on('user-joined', (data) => {
+                console.log('User joined:', data);
+                updateUserCount(data.userCount);
+            });
+
+            socket.on('user-left', (data) => {
+                console.log('User left:', data);
+                updateUserCount(data.userCount);
+                state.remoteCursors.delete(data.userId);
+                renderCursors();
+            });
+
+            socket.on('draw', (data) => {
+                applyRemoteDrawing(data);
+            });
+
+            socket.on('cursor-move', (data) => {
+                state.remoteCursors.set(data.socketId, {
+                    userId: data.userId,
+                    userColor: data.userColor,
+                    x: data.x,
+                    y: data.y
+                });
+                renderCursors();
+            });
+
+            socket.on('clear-canvas', () => {
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                state.history = [];
+                state.historyStep = -1;
+                saveHistory();
+            });
+
+            socket.on('undo', () => {
+                if (state.historyStep > 0) {
+                    state.historyStep--;
+                    restoreHistory();
+                }
+            });
+
+            socket.on('redo', () => {
+                if (state.historyStep < state.history.length - 1) {
+                    state.historyStep++;
+                    restoreHistory();
+                }
+            });
+        }
+
+        // Initialize
+        function init() {
+            initSocket();
+            setupStartScreen();
+            setupColorPalette();
+            setupColorWheel();
+        }
+
+        // Start Screen Setup
+        function setupStartScreen() {
+            document.getElementById('createRoomBtn').addEventListener('click', showCanvasSizeModal);
+            document.getElementById('joinRoomBtn').addEventListener('click', showJoinRoomModal);
+            
+            document.getElementById('cancelCanvasSizeBtn').addEventListener('click', hideCanvasSizeModal);
+            document.getElementById('confirmCanvasSizeBtn').addEventListener('click', confirmCreateRoom);
+            
+            document.querySelectorAll('.preset-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.getElementById('canvasWidth').value = btn.dataset.width;
+                    document.getElementById('canvasHeight').value = btn.dataset.height;
+                });
+            });
+            
+            document.getElementById('cancelJoinBtn').addEventListener('click', hideJoinRoomModal);
+            document.getElementById('confirmJoinBtn').addEventListener('click', confirmJoinRoom);
+            document.getElementById('roomCodeInput').addEventListener('input', (e) => {
+                e.target.value = e.target.value.toUpperCase();
+            });
+        }
+
+        function showCanvasSizeModal() {
+            document.getElementById('canvasSizeModal').classList.add('active');
+        }
+
+        function hideCanvasSizeModal() {
+            document.getElementById('canvasSizeModal').classList.remove('active');
+        }
+
+        function showJoinRoomModal() {
+            document.getElementById('joinError').innerHTML = '';
+            document.getElementById('joinRoomModal').classList.add('active');
+        }
+
+        function hideJoinRoomModal() {
+            document.getElementById('joinRoomModal').classList.remove('active');
+        }
+
+        function generateRoomCode() {
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+            let code = '';
+            for (let i = 0; i < 5; i++) {
+                code += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            return code;
+        }
+
+        function confirmCreateRoom() {
+            const width = parseInt(document.getElementById('canvasWidth').value);
+            const height = parseInt(document.getElementById('canvasHeight').value);
+            
+            if (width < 200 || width > 5000 || height < 200 || height > 5000) {
+                alert('Canvas size must be between 200 and 5000 pixels!');
+                return;
+            }
+            
+            state.canvasWidth = width;
+            state.canvasHeight = height;
+            state.roomCode = generateRoomCode();
+            state.isHost = true;
+            
+            hideCanvasSizeModal();
+            showLoadingScreen();
+
+            // Emit create-room event to server
+            socket.emit('create-room', {
+                roomCode: state.roomCode,
+                canvasWidth: state.canvasWidth,
+                canvasHeight: state.canvasHeight,
+                userId: state.userId,
+                userColor: state.userColor
+            });
+        }
+
+        function confirmJoinRoom() {
+            const code = document.getElementById('roomCodeInput').value.trim();
+            if (code.length !== 5) {
+                alert('Please enter a valid 5-character room code!');
+                return;
+            }
+            
+            state.roomCode = code;
+            state.isHost = false;
+            
+            hideJoinRoomModal();
+            showLoadingScreen();
+
+            // Emit join-room event to server
+            socket.emit('join-room', {
+                roomCode: state.roomCode,
+                userId: state.userId,
+                userColor: state.userColor
+            });
+        }
+
+        function showLoadingScreen() {
+            document.getElementById('loadingScreen').classList.add('active');
+        }
+
+        function hideLoadingScreen() {
+            document.getElementById('loadingScreen').classList.remove('active');
+        }
+
+        function startDrawingApp() {
+            document.getElementById('startScreen').classList.add('hidden');
+            document.getElementById('appContainer').classList.add('active');
+            document.getElementById('roomCodeDisplay').textContent = `ROOM: ${state.roomCode}`;
+            
+            setupCanvas();
+            setupEventListeners();
+        }
+
+        function setupCanvas() {
+            canvas = document.getElementById('canvas');
+            canvas.width = state.canvasWidth;
+            canvas.height = state.canvasHeight;
+            ctx = canvas.getContext('2d', { willReadFrequently: true });
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            saveHistory();
+        }
+
+        function setupEventListeners() {
+            document.querySelectorAll('.tool-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    state.tool = btn.dataset.tool;
+                });
+            });
+
+            document.getElementById('brushSize').addEventListener('input', (e) => {
+                state.brushSize = parseInt(e.target.value);
+                document.getElementById('sizeValue').textContent = state.brushSize;
+            });
+
+            canvas.addEventListener('mousedown', startDrawing);
+            canvas.addEventListener('mousemove', draw);
+            canvas.addEventListener('mouseup', stopDrawing);
+            canvas.addEventListener('mouseout', stopDrawing);
+            canvas.addEventListener('mousemove', updateCursor);
+
+            canvas.addEventListener('touchstart', handleTouch);
+            canvas.addEventListener('touchmove', handleTouch);
+            canvas.addEventListener('touchend', stopDrawing);
+
+            document.getElementById('clearBtn').addEventListener('click', clearCanvas);
+            document.getElementById('saveBtn').addEventListener('click', saveImage);
+            document.getElementById('undoBtn').addEventListener('click', undo);
+            document.getElementById('redoBtn').addEventListener('click', redo);
+
+            document.getElementById('hexInput').addEventListener('input', (e) => {
+                let value = e.target.value;
+                if (!value.startsWith('#')) value = '#' + value;
+                if (/^#[0-9A-Fa-f]{6}$/.test(value)) {
+                    selectColor(value, null);
+                }
+            });
+
+            // Setup zoom controls
+            setupZoomControls();
+        }
+
+        // Color palette setup
+        function setupColorPalette() {
+            const palette = document.getElementById('colorPalette');
+            defaultColors.forEach((color, index) => {
+                const swatch = document.createElement('div');
+                swatch.className = 'color-swatch';
+                if (index === 0) swatch.classList.add('active');
+                swatch.style.backgroundColor = color;
+                swatch.addEventListener('click', () => selectColor(color, swatch));
+                palette.appendChild(swatch);
+            });
+            updateColorDisplay();
+        }
+
+        function selectColor(color, element) {
+            state.color = color;
+            document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
+            if (element) element.classList.add('active');
+            
+            const rgb = hexToRgbArray(color);
+            const hsl = rgbToHsl(rgb[0], rgb[1], rgb[2]);
+            state.hue = hsl[0];
+            state.saturation = hsl[1];
+            state.lightness = hsl[2];
+            state.brightness = hsl[2] < 50 ? hsl[2] : 50 + (hsl[2] - 50) * 2;
+            
+            updateColorDisplay();
+            drawColorWheelIndicator();
+            drawBrightnessSlider();
+        }
+
+        function updateColorDisplay() {
+            const rgb = hexToRgbArray(state.color);
+            const hsl = rgbToHsl(rgb[0], rgb[1], rgb[2]);
+            
+            document.getElementById('hexInput').value = state.color;
+            document.getElementById('rgbValue').textContent = `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+            document.getElementById('hslValue').textContent = `hsl(${Math.round(hsl[0])}, ${Math.round(hsl[1])}%, ${Math.round(hsl[2])}%)`;
+        }
+
+        // Color wheel setup
+        function setupColorWheel() {
+            drawColorWheel();
+            drawBrightnessSlider();
+            
+            colorWheel.addEventListener('mousedown', handleColorWheelClick);
+            colorWheel.addEventListener('mousemove', (e) => {
+                if (e.buttons === 1) handleColorWheelClick(e);
+            });
+            
+            brightnessSlider.addEventListener('mousedown', handleBrightnessClick);
+            brightnessSlider.addEventListener('mousemove', (e) => {
+                if (e.buttons === 1) handleBrightnessClick(e);
+            });
+        }
+
+        function drawColorWheel() {
+            const radius = colorWheel.width / 2;
+            const centerX = radius;
+            const centerY = radius;
+            
+            for (let angle = 0; angle < 360; angle++) {
+                const startAngle = (angle - 90) * Math.PI / 180;
+                const endAngle = (angle + 1 - 90) * Math.PI / 180;
+                
+                for (let r = 0; r < radius; r++) {
+                    const saturation = (r / radius) * 100;
+                    colorWheelCtx.beginPath();
+                    colorWheelCtx.arc(centerX, centerY, r, startAngle, endAngle);
+                    colorWheelCtx.strokeStyle = `hsl(${angle}, ${saturation}%, 50%)`;
+                    colorWheelCtx.lineWidth = 1;
+                    colorWheelCtx.stroke();
+                }
+            }
+            
+            drawColorWheelIndicator();
+        }
+
+        function drawColorWheelIndicator() {
+            const radius = colorWheel.width / 2;
+            const centerX = radius;
+            const centerY = radius;
+            
+            const angle = (state.hue - 90) * Math.PI / 180;
+            const distance = (state.saturation / 100) * (radius - 5);
+            const x = centerX + Math.cos(angle) * distance;
+            const y = centerY + Math.sin(angle) * distance;
+            
+            colorWheelCtx.clearRect(0, 0, colorWheel.width, colorWheel.height);
+            
+            for (let angle = 0; angle < 360; angle++) {
+                const startAngle = (angle - 90) * Math.PI / 180;
+                const endAngle = (angle + 1 - 90) * Math.PI / 180;
+                
+                for (let r = 0; r < radius; r++) {
+                    const saturation = (r / radius) * 100;
+                    colorWheelCtx.beginPath();
+                    colorWheelCtx.arc(centerX, centerY, r, startAngle, endAngle);
+                    colorWheelCtx.strokeStyle = `hsl(${angle}, ${saturation}%, 50%)`;
+                    colorWheelCtx.lineWidth = 1;
+                    colorWheelCtx.stroke();
+                }
+            }
+            
+            colorWheelCtx.beginPath();
+            colorWheelCtx.arc(x, y, 8, 0, 2 * Math.PI);
+            colorWheelCtx.strokeStyle = '#ffffff';
+            colorWheelCtx.lineWidth = 3;
+            colorWheelCtx.stroke();
+            colorWheelCtx.strokeStyle = '#000000';
+            colorWheelCtx.lineWidth = 1;
+            colorWheelCtx.stroke();
+        }
+
+        function drawBrightnessSlider() {
+            const gradient = brightnessSliderCtx.createLinearGradient(0, 0, brightnessSlider.width, 0);
+            const baseColor = `hsl(${state.hue}, ${state.saturation}%, 50%)`;
+            
+            gradient.addColorStop(0, '#000000');
+            gradient.addColorStop(0.5, baseColor);
+            gradient.addColorStop(1, '#ffffff');
+            
+            brightnessSliderCtx.fillStyle = gradient;
+            brightnessSliderCtx.fillRect(0, 0, brightnessSlider.width, brightnessSlider.height);
+            
+            const x = (state.brightness / 100) * brightnessSlider.width;
+            brightnessSliderCtx.beginPath();
+            brightnessSliderCtx.arc(x, brightnessSlider.height / 2, 10, 0, 2 * Math.PI);
+            brightnessSliderCtx.strokeStyle = '#ffffff';
+            brightnessSliderCtx.lineWidth = 3;
+            brightnessSliderCtx.stroke();
+            brightnessSliderCtx.strokeStyle = '#000000';
+            brightnessSliderCtx.lineWidth = 1;
+            brightnessSliderCtx.stroke();
+        }
+
+        function handleColorWheelClick(e) {
+            const rect = colorWheel.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            const radius = colorWheel.width / 2;
+            const centerX = radius;
+            const centerY = radius;
+            
+            const dx = x - centerX;
+            const dy = y - centerY;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distance <= radius) {
+                let angle = Math.atan2(dy, dx) * 180 / Math.PI + 90;
+                if (angle < 0) angle += 360;
+                
+                state.hue = Math.round(angle);
+                state.saturation = Math.min(100, (distance / radius) * 100);
+                
+                updateColorFromHSL();
+            }
+        }
+
+        function handleBrightnessClick(e) {
+            const rect = brightnessSlider.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const percentage = Math.max(0, Math.min(100, (x / brightnessSlider.width) * 100));
+            
+            state.brightness = percentage;
+            updateColorFromHSL();
+        }
+
+        function updateColorFromHSL() {
+            let l = 50;
+            if (state.brightness < 50) {
+                l = state.brightness;
+            } else {
+                l = 50 + (state.brightness - 50) * 0.5;
+            }
+            
+            state.lightness = l;
+            const color = hslToHex(state.hue, state.saturation, state.lightness);
+            state.color = color;
+            
+            document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
+            updateColorDisplay();
+            drawColorWheelIndicator();
+            drawBrightnessSlider();
+        }
+
+        function hslToHex(h, s, l) {
+            s /= 100;
+            l /= 100;
+            
+            const c = (1 - Math.abs(2 * l - 1)) * s;
+            const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+            const m = l - c / 2;
+            
+            let r = 0, g = 0, b = 0;
+            
+            if (h < 60) {
+                r = c; g = x; b = 0;
+            } else if (h < 120) {
+                r = x; g = c; b = 0;
+            } else if (h < 180) {
+                r = 0; g = c; b = x;
+            } else if (h < 240) {
+                r = 0; g = x; b = c;
+            } else if (h < 300) {
+                r = x; g = 0; b = c;
+            } else {
+                r = c; g = 0; b = x;
+            }
+            
+            r = Math.round((r + m) * 255);
+            g = Math.round((g + m) * 255);
+            b = Math.round((b + m) * 255);
+            
+            return '#' + [r, g, b].map(x => {
+                const hex = x.toString(16);
+                return hex.length === 1 ? '0' + hex : hex;
+            }).join('');
+        }
+
+        function hexToRgbArray(hex) {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? [
+                parseInt(result[1], 16),
+                parseInt(result[2], 16),
+                parseInt(result[3], 16)
+            ] : [0, 0, 0];
+        }
+
+        function rgbToHsl(r, g, b) {
+            r /= 255;
+            g /= 255;
+            b /= 255;
+            
+            const max = Math.max(r, g, b);
+            const min = Math.min(r, g, b);
+            let h, s, l = (max + min) / 2;
+            
+            if (max === min) {
+                h = s = 0;
+            } else {
+                const d = max - min;
+                s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+                
+                switch (max) {
+                    case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+                    case g: h = ((b - r) / d + 2) / 6; break;
+                    case b: h = ((r - g) / d + 4) / 6; break;
+                }
+            }
+            
+            return [h * 360, s * 100, l * 100];
+        }
+
+        // Drawing functions
+        function startDrawing(e) {
+            // Check if panning (middle button or space key)
+            if (e.button === 1 || (e.button === 0 && e.shiftKey)) {
+                state.isPanning = true;
+                state.lastPanX = e.clientX;
+                state.lastPanY = e.clientY;
+                canvas.style.cursor = 'grabbing';
+                return;
+            }
+
+            state.isDrawing = true;
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) / state.zoom;
+            const y = (e.clientY - rect.top) / state.zoom;
+            state.startX = x;
+            state.startY = y;
+
+            if (state.tool === 'pen' || state.tool === 'eraser') {
+                ctx.beginPath();
+                ctx.moveTo(state.startX, state.startY);
+            } else if (state.tool === 'fill') {
+                floodFill(Math.floor(state.startX), Math.floor(state.startY));
+                saveHistory();
+                
+                // Emit fill to server
+                socket.emit('draw', {
+                    type: 'fill',
+                    x: Math.floor(state.startX),
+                    y: Math.floor(state.startY),
+                    color: state.color,
+                    userId: state.userId
+                });
+            }
+        }
+
+        function draw(e) {
+            if (state.isPanning) {
+                const dx = e.clientX - state.lastPanX;
+                const dy = e.clientY - state.lastPanY;
+                state.panX += dx;
+                state.panY += dy;
+                state.lastPanX = e.clientX;
+                state.lastPanY = e.clientY;
+                updateCanvasTransform();
+                return;
+            }
+
+            if (!state.isDrawing) return;
+            if (state.tool === 'fill') return;
+
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) / state.zoom;
+            const y = (e.clientY - rect.top) / state.zoom;
+
+            if (state.tool === 'pen' || state.tool === 'eraser') {
+                ctx.strokeStyle = state.tool === 'eraser' ? '#FFFFFF' : state.color;
+                ctx.lineWidth = state.brushSize;
+                ctx.lineTo(x, y);
+                ctx.stroke();
+
+                // Emit drawing to server
+                socket.emit('draw', {
+                    type: 'stroke',
+                    x: x,
+                    y: y,
+                    color: state.tool === 'eraser' ? '#FFFFFF' : state.color,
+                    brushSize: state.brushSize,
+                    userId: state.userId
+                });
+            }
+        }
+
+        function stopDrawing(e) {
+            if (state.isPanning) {
+                state.isPanning = false;
+                canvas.style.cursor = 'url(\'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="%238B5CF6" stroke="white" stroke-width="2"/></svg>\') 12 12, auto';
+                return;
+            }
+
+            if (!state.isDrawing) return;
+            state.isDrawing = false;
+
+            if (!e.clientX) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) / state.zoom;
+            const y = (e.clientY - rect.top) / state.zoom;
+
+            if (state.tool === 'line') {
+                drawLine(state.startX, state.startY, x, y);
+                socket.emit('draw', {
+                    type: 'line',
+                    x1: state.startX,
+                    y1: state.startY,
+                    x2: x,
+                    y2: y,
+                    color: state.color,
+                    brushSize: state.brushSize,
+                    userId: state.userId
+                });
+            } else if (state.tool === 'rectangle') {
+                drawRectangle(state.startX, state.startY, x, y);
+                socket.emit('draw', {
+                    type: 'rectangle',
+                    x1: state.startX,
+                    y1: state.startY,
+                    x2: x,
+                    y2: y,
+                    color: state.color,
+                    brushSize: state.brushSize,
+                    userId: state.userId
+                });
+            } else if (state.tool === 'circle') {
+                drawCircle(state.startX, state.startY, x, y);
+                const radius = Math.sqrt(Math.pow(x - state.startX, 2) + Math.pow(y - state.startY, 2));
+                socket.emit('draw', {
+                    type: 'circle',
+                    x: state.startX,
+                    y: state.startY,
+                    radius: radius,
+                    color: state.color,
+                    brushSize: state.brushSize,
+                    userId: state.userId
+                });
+            } else if (state.tool === 'pen' || state.tool === 'eraser') {
+                socket.emit('draw', {
+                    type: 'end-stroke',
+                    userId: state.userId
+                });
+            }
+
+            if (state.tool !== 'fill') {
+                saveHistory();
+            }
+        }
+
+        function handleTouch(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            if (!touch) return;
+            const mouseEvent = new MouseEvent(e.type === 'touchstart' ? 'mousedown' : 
+                                             e.type === 'touchmove' ? 'mousemove' : 'mouseup', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            canvas.dispatchEvent(mouseEvent);
+        }
+
+        function drawLine(x1, y1, x2, y2) {
+            ctx.strokeStyle = state.color;
+            ctx.lineWidth = state.brushSize;
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+        }
+
+        function drawRectangle(x1, y1, x2, y2) {
+            ctx.strokeStyle = state.color;
+            ctx.lineWidth = state.brushSize;
+            ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+        }
+
+        function drawCircle(x1, y1, x2, y2) {
+            const radius = Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
+            ctx.strokeStyle = state.color;
+            ctx.lineWidth = state.brushSize;
+            ctx.beginPath();
+            ctx.arc(x1, y1, radius, 0, 2 * Math.PI);
+            ctx.stroke();
+        }
+
+        function floodFill(startX, startY) {
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const pixels = imageData.data;
+            const targetColor = getPixelColor(pixels, startX, startY);
+            const fillColor = hexToRgb(state.color);
+
+            if (colorsMatch(targetColor, fillColor)) return;
+
+            const stack = [[startX, startY]];
+            const visited = new Set();
+
+            while (stack.length > 0) {
+                const [x, y] = stack.pop();
+                const key = `${x},${y}`;
+
+                if (visited.has(key)) continue;
+                if (x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) continue;
+
+                const currentColor = getPixelColor(pixels, x, y);
+                if (!colorsMatch(currentColor, targetColor)) continue;
+
+                visited.add(key);
+                setPixelColor(pixels, x, y, fillColor);
+
+                stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+            }
+
+            ctx.putImageData(imageData, 0, 0);
+        }
+
+        function getPixelColor(pixels, x, y) {
+            const index = (y * canvas.width + x) * 4;
+            return [pixels[index], pixels[index + 1], pixels[index + 2], pixels[index + 3]];
+        }
+
+        function setPixelColor(pixels, x, y, color) {
+            const index = (y * canvas.width + x) * 4;
+            pixels[index] = color[0];
+            pixels[index + 1] = color[1];
+            pixels[index + 2] = color[2];
+            pixels[index + 3] = 255;
+        }
+
+        function colorsMatch(c1, c2) {
+            return c1[0] === c2[0] && c1[1] === c2[1] && c1[2] === c2[2] && c1[3] === c2[3];
+        }
+
+        function hexToRgb(hex) {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? [
+                parseInt(result[1], 16),
+                parseInt(result[2], 16),
+                parseInt(result[3], 16),
+                255
+            ] : [0, 0, 0, 255];
+        }
+
+        // Apply remote drawing
+        function applyRemoteDrawing(data) {
+            if (data.userId === state.userId) return;
+
+            switch(data.type) {
+                case 'stroke':
+                    if (!ctx.inStroke) {
+                        ctx.beginPath();
+                        ctx.inStroke = true;
+                    }
+                    ctx.strokeStyle = data.color;
+                    ctx.lineWidth = data.brushSize;
+                    ctx.lineTo(data.x, data.y);
+                    ctx.stroke();
+                    break;
+                    
+                case 'end-stroke':
+                    ctx.inStroke = false;
+                    break;
+
+                case 'line':
+                    ctx.strokeStyle = data.color;
+                    ctx.lineWidth = data.brushSize;
+                    ctx.beginPath();
+                    ctx.moveTo(data.x1, data.y1);
+                    ctx.lineTo(data.x2, data.y2);
+                    ctx.stroke();
+                    break;
+
+                case 'rectangle':
+                    ctx.strokeStyle = data.color;
+                    ctx.lineWidth = data.brushSize;
+                    ctx.strokeRect(data.x1, data.y1, data.x2 - data.x1, data.y2 - data.y1);
+                    break;
+
+                case 'circle':
+                    ctx.strokeStyle = data.color;
+                    ctx.lineWidth = data.brushSize;
+                    ctx.beginPath();
+                    ctx.arc(data.x, data.y, data.radius, 0, 2 * Math.PI);
+                    ctx.stroke();
+                    break;
+
+                case 'fill':
+                    floodFill(data.x, data.y);
+                    break;
+            }
+        }
+
+        // History (Undo/Redo)
+        function saveHistory() {
+            const imageData = canvas.toDataURL();
+            state.history = state.history.slice(0, state.historyStep + 1);
+            state.history.push(imageData);
+            state.historyStep++;
+            updateHistoryButtons();
+        }
+
+        function undo() {
+            if (state.historyStep > 0) {
+                state.historyStep--;
+                restoreHistory();
+                socket.emit('undo');
+            }
+        }
+
+        function redo() {
+            if (state.historyStep < state.history.length - 1) {
+                state.historyStep++;
+                restoreHistory();
+                socket.emit('redo');
+            }
+        }
+
+        function restoreHistory() {
+            const img = new Image();
+            img.onload = () => {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0);
+            };
+            img.src = state.history[state.historyStep];
+            updateHistoryButtons();
+        }
+
+        function updateHistoryButtons() {
+            document.getElementById('undoBtn').disabled = state.historyStep <= 0;
+            document.getElementById('redoBtn').disabled = state.historyStep >= state.history.length - 1;
+        }
+
+        // Canvas actions
+        function clearCanvas() {
+            if (confirm('Clear the entire canvas? This will affect all users in the room.')) {
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                state.history = [];
+                state.historyStep = -1;
+                saveHistory();
+                socket.emit('clear-canvas');
+            }
+        }
+
+        function saveImage() {
+            const link = document.createElement('a');
+            link.download = `drawing-${state.roomCode}-${Date.now()}.png`;
+            link.href = canvas.toDataURL();
+            link.click();
+        }
+
+        // Cursor tracking
+        function updateCursor(e) {
+            if (!state.roomCode) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) / canvas.width;
+            const y = (e.clientY - rect.top) / canvas.height;
+            
+            socket.emit('cursor-move', {
+                userId: state.userId,
+                userColor: state.userColor,
+                x: x,
+                y: y
+            });
+        }
+
+        function renderCursors() {
+            const overlay = document.getElementById('cursorsOverlay');
+            const canvasRect = canvas.getBoundingClientRect();
+            overlay.innerHTML = '';
+
+            state.remoteCursors.forEach((cursor, socketId) => {
+                const cursorEl = document.createElement('div');
+                cursorEl.className = 'remote-cursor';
+                cursorEl.style.backgroundColor = cursor.userColor;
+                cursorEl.style.left = canvasRect.left + (cursor.x * canvas.width) + 'px';
+                cursorEl.style.top = canvasRect.top + (cursor.y * canvas.height) + 'px';
+
+                const label = document.createElement('div');
+                label.className = 'cursor-label';
+                label.textContent = cursor.userId.substr(0, 8);
+                cursorEl.appendChild(label);
+
+                overlay.appendChild(cursorEl);
+            });
+        }
+
+        function updateConnectionStatus(status) {
+            document.getElementById('connectionStatus').textContent = status;
+        }
+
+        function updateUserCount(count) {
+            document.getElementById('userCountNum').textContent = count;
+            document.getElementById('userPlural').textContent = count !== 1 ? 's' : '';
+        }
+
+        // Zoom functions
+        function zoomIn() {
+            if (state.zoom < state.maxZoom) {
+                state.zoom = Math.min(state.zoom * 1.2, state.maxZoom);
+                applyZoom();
+            }
+        }
+
+        function zoomOut() {
+            if (state.zoom > state.minZoom) {
+                state.zoom = Math.max(state.zoom / 1.2, state.minZoom);
+                applyZoom();
+            }
+        }
+
+        function resetZoom() {
+            state.zoom = 1;
+            applyZoom();
+        }
+
+        function applyZoom() {
+            const container = document.getElementById('canvasContainer');
+            container.style.transform = `scale(${state.zoom})`;
+            
+            // Update zoom level display
+            document.getElementById('zoomLevel').textContent = Math.round(state.zoom * 100) + '%';
+            
+            // Update button states
+            document.getElementById('zoomInBtn').disabled = state.zoom >= state.maxZoom;
+            document.getElementById('zoomOutBtn').disabled = state.zoom <= state.minZoom;
+        }
+
+        function setupZoomControls() {
+            document.getElementById('zoomInBtn').addEventListener('click', zoomIn);
+            document.getElementById('zoomOutBtn').addEventListener('click', zoomOut);
+            document.getElementById('zoomResetBtn').addEventListener('click', resetZoom);
+            
+            // Mouse wheel zoom
+            const canvasWrapper = document.getElementById('canvasWrapper');
+            canvasWrapper.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                
+                if (e.deltaY < 0) {
+                    zoomIn();
+                } else {
+                    zoomOut();
+                }
+            });
+
+            // Keyboard shortcuts
+            document.addEventListener('keydown', (e) => {
+                // Only zoom when canvas is active
+                if (!canvas) return;
+                
+                // Ctrl/Cmd + Plus for zoom in
+                if ((e.ctrlKey || e.metaKey) && (e.key === '+' || e.key === '=')) {
+                    e.preventDefault();
+                    zoomIn();
+                }
+                
+                // Ctrl/Cmd + Minus for zoom out
+                if ((e.ctrlKey || e.metaKey) && e.key === '-') {
+                    e.preventDefault();
+                    zoomOut();
+                }
+                
+                // Ctrl/Cmd + 0 for reset zoom
+                if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+                    e.preventDefault();
+                    resetZoom();
+                }
+            });
+        }
+
+        // Start the app
+        init();
+    </script>
+</body>
+</html>
